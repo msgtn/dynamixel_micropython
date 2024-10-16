@@ -19,3 +19,13 @@ You will need to know the motor's model, baudrate, and ID. Apart from assuming t
 - Enter the `repl`
 - `Ctrl+D` to reboot. The motor should execute the example by sweeping back and forth.
 
+
+# TODO
+- [ ] Implement tick in either direction
+    - Snap to closest multiple of 5
+- [ ] Implement multi-turn
+    - [Docs for operating modes](https://emanual.robotis.com/docs/en/dxl/x/xl330-m288/#operating-mode)
+    - 3 (default) = position control, 4 = extended position control
+    - Must turn off torque before setting mode 
+- [ ] Address intermittent packet dropouts, specifically on reads. Maybe due to wiring TX and RX together
+- [ ] Find way to prevent shutdown when motor is moving particularly fast. Might be back-emf going into the Pico.
