@@ -2,6 +2,9 @@ import time
 from dynamixel_python import DynamixelManager
 # from itertools import accumulate
 import _thread
+import asyncio
+import gc
+gc.enable()
 
 from neopixel_12 import np, NP_COUNT, NP_PIN, COLORS, COLOR_TUPLES
 
@@ -26,83 +29,162 @@ TIMESCALES_CUMU = [60,
     # 120,
 3600, 86400, 604800, 2419200, 29030400, 290304000]
 
-
 # def single_motor_example():
-if True:
-    """
-    turn on a single dynamixel and sweep it between position 0 and position 1024 three times
-    """
-    motors = DynamixelManager(USB_PORT, baud_rate=BAUDRATE)
-    testMotor = motors.add_dynamixel('TestMotor', ID, DYNAMIXEL_MODEL)
-    motors.init()
+"""
+turn on a single dynamixel and sweep it between position 0 and position 1024 three times
+"""
+motors = DynamixelManager(USB_PORT, baud_rate=BAUDRATE)
+motor = motors.add_dynamixel('motor', ID, DYNAMIXEL_MODEL)
+motors.init()
+# def safe_io(attr, _operation="get", attempts=float('inf'), *args, **kwargs):
+def safe_io(attr, _operation="get", *args, **kwargs):
+    print(attr, _operation, args, kwargs)
+    if not hasattr(motor, f"{_operation}_{attr}"):
+        return
+    io_attr_fn = getattr(motor, f"{_operation}_{attr}")
+    # read_attempts =
+    ret = None
+    # while read_attempts < attempts:
+    attempts = 10
+    attempt_ctr = 0
+    while attempts > 0:
+    # while True:
+        # print("reading")
+        # print(f"attempts: {attempt_ctr}")
+        try:
+            ret = io_attr_fn(*args, **kwargs)
+            if _operation=="set" and ret:
+                break
+            elif _operation=="get":
+                break
+        except:
+            # read_attempts += 1
+           # time.sleep(0.05)
+            time.sleep(0.1)
+        attempts -= 1
+        attempt_ctr += 1
 
-    # if not testMotor.ping():
-    #     raise BaseException('motor not configured correctly')
+    return ret
 
-    testMotor.set_operating_mode(3)   
-    testMotor.set_led(True)
-    testMotor.set_torque_enable(True)
-    testMotor.set_profile_velocity(262)
 
-    # for i in range(3):
-    #     testMotor.set_goal_position(0)
-    #     time.sleep(0.5)
+# def safe_get(attr, attempts=10):
+def safe_set(attr, *args, **kwargs):
+    return safe_io(attr, "set", *args, **kwargs)
 
-    #     testMotor.set_goal_position(1024)
-    #     time.sleep(0.5)
+def safe_get(attr, attempts=float('inf'), *args, **kwargs):
+    return safe_io(attr, "get", *args, **kwargs)
 
-    testMotor.set_torque_enable(False)
-    testMotor.set_led(False)
 
-def reset_motor():
-    testMotor.set_torque_enable(False)
-    testMotor.set_operating_mode(4)  
-    testMotor.set_led(True)
+ENABLED = False
+def disable():
+    _able(False)
 
-    # while not testMotor.get_torque_enable():
-    testMotor.set_torque_enable(True)
+def enable():
+    _able(True)
+
+def _able(_enable: bool):
+    global ENABLED
+    safe_set("led", _enable)
+    safe_set("torque_enable", _enable)
+    ENABLED = _enable
+
+
+disable()
+time.sleep(0.1)
+safe_set("operating_mode", 4)
+time.sleep(0.1)
+safe_set("profile_velocity", 262)
+time.sleep(0.1)
+safe_set("drive_mode", 8)
+time.sleep(0.1)
+
+t_start = t_last = time.time()
+last_moved = 0
+def enum(**enums: int):
+    return type('Enum', (), enums)
+State = enum(Idle=1, Timer=2, Stopwatch=3)
+state = State.Idle
+def get_position(**kwargs):
+    global position
+    position =  safe_get('present_position', **kwargs)
+    return position
+position = get_position()
+
+
+
+POSITION_RESET = 10
+async def reset_motor():
+    await _reset_motor()
+
+def _reset_motor():
+    # disable()
+    # time.sleep(0.1)
+    motor.set_led(True)
+
+    # while not motor.get_torque_enable():
+    # motor.set_torque_enable(True)
+    time.sleep(0.1)
+    enable()
+    time.sleep(0.1)
         # time.sleep(0.5) 
-    testMotor.set_profile_velocity(262)
-    testMotor.set_goal_position(2000)
-    
-    testMotor.set_torque_enable(False)
+    # motor.set_profile_velocity(262)
+    # motor.set_goal_position(POSITION_RESET)
+    safe_set("goal_position", POSITION_RESET)
+    time.sleep(1)
 
-    testMotor.set_led(False)
+    disable()
+    time.sleep(0.1)
 
-def listen_write(pos=None):
+    motor.set_led(False)
+
+
+def global_position(fn):
+    def _fn(*args, **kwargs):
+        global position
+        if position is None:
+            position = get_position()
+        # return fn(position=position, *args, **kwargs)
+        return fn(position=position)
+    return _fn
+
+@global_position
+def position2rots_rel(position=None):
+    rots = position//4096
+    rel_pos = position%4096
+    return rots, rel_pos
+   
+
+# def listen_write(pos=None):
+@global_position
+def position2led(position=None, *args, **kwargs):
     global breath_mult
     # read_attempts = 0
     # pos = None
     # while read_attempts < 10:
     #     try:
-    #         pos = testMotor.get_present_position()
+    #         pos = motor.get_present_position()
     #         break
     #     except:
     #         read_attempts += 1
     # if pos is None:
     #     return 
-    if pos is None:
-        pos = safe_read("present_position", max_attempts=10)
-    if not pos:
-        return
-    rots = pos//4096
-    rel_pos = pos%4096
+    # if position is None:
+    #     position = safe_get("present_position", attempts=10)
+    # if not position:
+    #     return
+    rots, rel_pos = position2rots_rel(position)
+    # rots = position//4096
+    # rel_pos = position%4096
     # clock_pos = int(pos/4096*NP_COUNT)
     # clock_pos = int((pos%4096)/4096*NP_COUNT)
     clock_pos = rel_pos/4096*NP_COUNT
     clock_pos = min(NP_COUNT, clock_pos)
-    # print(clock_pos, pos)
-    # if clock_pos>=0:
-    #     if clock
-    # clock_pos = round(clock_pos)
-        # clock_pos
-    # clock_pos = round(clock_pos)
-    # if rots == clock_pos == 0:
-    #     clock_pos = 
+    rots %= len(TIMESCALES_CUMU)
+    # print(rots)
     total_time = TIMESCALES_CUMU[rots]*(rel_pos/4096)
     if rots > 0:
         total_time = max(TIMESCALES_CUMU[rots-1], total_time)
-    print(total_time)
+    # print(total_time)
     if clock_pos < 1:
         if rots > 0 or clock_pos > 0.1:
             clock_pos = 1
@@ -118,29 +200,10 @@ def listen_write(pos=None):
     for j in range(clock_pos, NP_COUNT):
         np[j] = (0,0,0,0)
     np.write()
-
-# def safe_read(attr, max_attempts=10):
-def safe_read(attr, max_attempts=float('inf')):
-    if not hasattr(testMotor, f"get_{attr}"):
-        return
-    get_attr_fn = getattr(testMotor, f"get_{attr}")
-    read_attempts = 0
-    ret = None
-    while read_attempts < max_attempts:
-        # print("reading")
-        try:
-            ret = get_attr_fn()
-            break
-        except:
-            read_attempts += 1
-            # time.sleep(0.05)
-            time.sleep(0.1)
-
-    return ret
-    
-def pos2time(pos):
-    rots = pos//4096
-    rel_pos = pos%4096
+   
+@global_position
+def pos2time(position=None):
+    rots, rel_pos = position2rots_rel(position)
     norm_pos = rel_pos/4096
     scale = TIMESCALES_CUMU[rots]
     ret = norm_pos*scale
@@ -156,25 +219,28 @@ def time2pos(t):
     return int(pos)
 # 
 def tick():
+    global position
     t_start = t = time.time()
-    # pos_start = testMotor.get_present_position()
-    pos_start = pos = safe_read("present_position", )
+    # pos_start = motor.get_present_position()
+    # pos_start = position = safe_get("present_position", )
+    pos_start = position
     # Calculate the set time in seconds
     # total_time = pos_start/4096*60
-    t_total = pos2time(pos_start)
+    t_total = t_left = pos2time(pos_start)
     # get how much time to tick for
     # home position is 0
-    # while safe_read("present_position") > 10:
-    testMotor.set_operating_mode(4)
-    while not testMotor.set_torque_enable(True):
+    # while safe_get("present_position") > 10:
+    motor.set_operating_mode(4)
+    while not motor.set_torque_enable(True):
         time.sleep(0.05)
         continue
-    testMotor.set_profile_velocity(262)
+    motor.set_profile_velocity(262)
     del_pos = del2_pos = 0
     del_t = 0
     last_scale = None
-    while pos and pos > 10:
-        print(pos)
+    # while pos and pos > 0:
+    while position and t_left > 0:
+        print(position)
         # rots = pos//4096
         # pos_rel = pos%4096
         # scale = TIMESCALES_CUMU[rots]
@@ -214,27 +280,51 @@ def tick():
         t_left = max(t_total-del_t, 0)
         pos_t = time2pos(t_left)
         pos_t = max(2, pos_t)
-        print(del_t, pos, del_pos, pos_t)
+        print(t_left, del_t, position, pos_t)
         
-        # testMotor.set_torque_enable(True)
-        while not testMotor.set_goal_position(pos_t):
+        # motor.set_torque_enable(True)
+        while not motor.set_goal_position(pos_t):
             time.sleep(0.1)
             continue
-        # testMotor.set_torque_enable(False)
-        pos = safe_read(
-            "present_position",
-            )
-        listen_write(pos)
-    while not testMotor.set_torque_enable(False):
+        # motor.set_torque_enable(False)
+        # position = safe_get(
+        #     "present_position",
+        # position
+        # listen_write(position)
+        # if t_left==0:
+        #     break
+    while not motor.set_torque_enable(False):
         time.sleep(0.1)
 
+# atomic tick function
+async def _tick(t_start, t_last, t_total):
+    global position, ENABLED
+    #if time.time()-t_last < 1:
+    #    return t_last
+    while time.time()-t_last < 1:
+        continue
+    del_t = time.time() - t_start
+    t_left = max(t_total - del_t, 0)
+    position_t = time2pos(t_left)
+    position_t = max(position_t, POSITION_MIN)
+    print(t_total, t_left, del_t, position, position_t)
+    # while not motor.set_goal_position(position_t):
+    # enable()
+    time.sleep(0.1)
+    ENABLED = True
+    while not safe_set("goal_position", position_t):
+        time.sleep(0.1)
+    time.sleep(0.1)
+    
+    disable()
+    time.sleep(0.1)
+    return time.time()
+
 # import functools
-# disable = partial(testMotor.set_torque_enable(False))
-# enable = partial(testMotor.set_torque_enable(True))
-def disable():
-    testMotor.set_torque_enable(False)
-def enable():
-    testMotor.set_torque_enable(True)
+# disable = partial(motor.set_torque_enable(False))
+# enable = partial(motor.set_torque_enable(True))
+# def safe_write(attr, attempts=float('inf'))
+
 
 
 def loop():
@@ -263,13 +353,105 @@ def breathe():
             time.sleep(0.1)
         # breath_mult = (breath_mult%10)+1
 
-if __name__=="__main__":
-    reset_motor()
+POSITION_MIN, POSITION_MAX = 0, 2**32
+POSITION_RESET_THRESHOLD = 20
+def at_reset():
+    global position
+    del_position = min(abs(POSITION_MAX - position), abs(POSITION_MIN - position))
+    return del_position < POSITION_RESET_THRESHOLD
+
+MOVE_THRESHOLD = 2
+def at_rest():
+    global last_moved
+    return time.time() - last_moved > MOVE_THRESHOLD
+
+async def set_idle():
+    global state
+    disable()
+    state = State.Idle
+
+async def set_stopwatch():
+    global state, t_start, t_last, t_total, position
+    enable()
+    state = State.Stopwatch
+    t_start = t_last = time.time()
+    t_total = pos2time(position)
+
+async def handle_state():
+    global state, position, last_moved, t_start, t_last, t_total
+    
+    while True:
+        print(f"State: {state}")
+        if state == State.Idle:
+            if not at_reset() and at_rest():
+                await set_stopwatch()
+            # If not at reset position
+            # and last moved 2(?) seconds ago,
+            # transition to Stopwatch
+            pass
+        elif state == State.Stopwatch:
+            t_last = await _tick(t_start, t_last, t_total)
+            # tick()
+            if at_reset() or last_moved > t_start:
+            # if at_reset() :
+                _reset_motor()
+                await set_idle()
+
+            # if at reset position
+            # transition to Idle
+            pass
+        await asyncio.sleep_ms(10)
+
+
+# def moving_thread():
+async def moving_thread():
+    global last_moved, mode
+    global position
+    global ENABLED
+    while True:
+        position = get_position()
+        # print("velocity")
+        try:
+            present_velocity = safe_get("present_velocity")
+            if present_velocity is not None and present_velocity > 0 and not ENABLED:
+                last_moved = time.time()
+                
+                print("VELOCITY", present_velocity)
+        except:
+            pass
+
+        await asyncio.sleep_ms(10)
+        # time.sleep(0.1)
+
+async def loop_async():
+    while True:
+        # listen_write()
+        position2led()
+        await asyncio.sleep_ms(10)
+        # time.sleep(0.1)
+
+def main():
+    _reset_motor()
     time.sleep(1)
-    testMotor.set_torque_enable(False)
+    disable()
     time.sleep(1)
     # breathe_thread = _thread.start_new_thread(breathe, ())
-    loop()
+    # _thread.start_new_thread(moving_thread, ())
+    # async_loop = asyncio.get_event_loop()
+    # async_loop.create_task(moving_thread())
+    # async_loop.run_forever()
+    
+    async def _main():
+        await asyncio.gather(
+            moving_thread(),
+            loop_async(),
+            handle_state(),
+        )
+    asyncio.run(_main())
+    # loop()
    
+# if __name__=="__main__":
+#     break
+#     main()
 # if __name__ == '__main__':
     # single_motor_example()
