@@ -14,6 +14,14 @@ BAUDRATE = 9600
 DYNAMIXEL_MODEL = 'xl330-m288'
 ID = 1
 
+POSITION_MIN, POSITION_MAX = 0, 2**32
+VALUE_MIN, VALUE_MAX = 0, 2**32
+
+POSITION_RESET_THRESHOLD = 20
+VALUE_RESET_THRESHOLD = 20
+POSITION_RESET = 10
+# POSITION_RESET = VALUE_MAX - POSITION_RESET
+
 TIMESCALES = [
     60,         # seconds-minutes
     60,         # minutes-hours
@@ -95,28 +103,35 @@ safe_set("operating_mode", 4)
 time.sleep(0.1)
 safe_set("profile_velocity", 262)
 time.sleep(0.1)
-safe_set("drive_mode", 8)
+# safe_set("drive_mode", 8)
+# DRIVE MODE
+# [torque enable when goal, something, unused, reverse direction]
+safe_set("drive_mode", 9)
 time.sleep(0.1)
 
 t_start = t_last = time.time()
 last_moved = 0
 def enum(**enums: int):
     return type('Enum', (), enums)
-State = enum(Idle=1, Timer=2, Stopwatch=3)
+State = enum(Idle=1, Stopwatch=2, Timer=3)
 state = State.Idle
-def get_position(**kwargs):
+def _get_position(**kwargs):
     global position
-    position =  safe_get('present_position', **kwargs)
+    position = safe_get('present_position', **kwargs)
+    # position = POSITION_MAX - position
     return position
-position = get_position()
-
-
-
-POSITION_RESET = 10
+async def get_position():
+    global position
+    while True:
+        position = _get_position()
+        await asyncio.sleep_ms(1)
+    # return  _get_position() 
+position = _get_position()
 async def reset_motor():
     await _reset_motor()
 
 def _reset_motor():
+    global position
     # disable()
     # time.sleep(0.1)
     motor.set_led(True)
@@ -130,7 +145,12 @@ def _reset_motor():
     # motor.set_profile_velocity(262)
     # motor.set_goal_position(POSITION_RESET)
     safe_set("goal_position", POSITION_RESET)
-    time.sleep(1)
+    while not at_reset():
+        position = _get_position()
+        
+        print("Not at reset")
+
+        time.sleep(0.1)
 
     disable()
     time.sleep(0.1)
@@ -138,11 +158,13 @@ def _reset_motor():
     motor.set_led(False)
 
 
+
+
 def global_position(fn):
     def _fn(*args, **kwargs):
         global position
-        if position is None:
-            position = get_position()
+        # if position is None:
+        #     # # position = get_position()
         # return fn(position=position, *args, **kwargs)
         return fn(position=position)
     return _fn
@@ -205,7 +227,7 @@ def position2led(position=None, *args, **kwargs):
 def pos2time(position=None):
     rots, rel_pos = position2rots_rel(position)
     norm_pos = rel_pos/4096
-    scale = TIMESCALES_CUMU[rots]
+    scale = TIMESCALES_CUMU[min(rots, len(TIMESCALES_CUMU)-1)]
     ret = norm_pos*scale
     return ret
 
@@ -216,6 +238,7 @@ def time2pos(t):
     scale = TIMESCALES_CUMU[rots]
     pos = rots*4096
     pos += (t/scale)*4096
+    # pos = POSITION_MAX - pos
     return int(pos)
 # 
 def tick():
@@ -284,7 +307,7 @@ def tick():
         
         # motor.set_torque_enable(True)
         while not motor.set_goal_position(pos_t):
-            time.sleep(0.1)
+            time.sleep(0.2)
             continue
         # motor.set_torque_enable(False)
         # position = safe_get(
@@ -298,16 +321,18 @@ def tick():
 
 # atomic tick function
 async def _tick(t_start, t_last, t_total):
-    global position, ENABLED
+    global position, ENABLED, state
     #if time.time()-t_last < 1:
     #    return t_last
     while time.time()-t_last < 1:
         continue
-    del_t = time.time() - t_start
-    t_left = max(t_total - del_t, 0)
-    position_t = time2pos(t_left)
-    position_t = max(position_t, POSITION_MIN)
-    print(t_total, t_left, del_t, position, position_t)
+    t = time.time() - t_start
+
+    if state == State.Timer:
+        t = max(t_total - t, 0)
+    position_t = time2pos(t)
+    position_t = min(max(position_t, POSITION_MIN), POSITION_MAX)
+    print(t_total, t, position, position_t)
     # while not motor.set_goal_position(position_t):
     # enable()
     time.sleep(0.1)
@@ -353,12 +378,15 @@ def breathe():
             time.sleep(0.1)
         # breath_mult = (breath_mult%10)+1
 
-POSITION_MIN, POSITION_MAX = 0, 2**32
-POSITION_RESET_THRESHOLD = 20
 def at_reset():
     global position
-    del_position = min(abs(POSITION_MAX - position), abs(POSITION_MIN - position))
-    return del_position < POSITION_RESET_THRESHOLD
+    # # position = get_position()
+    return close_to_end(position)
+
+def close_to_end(x,):
+    print(x)
+    del_x = min(abs(VALUE_MAX - x), abs(VALUE_MIN - x))
+    return del_x < VALUE_RESET_THRESHOLD
 
 MOVE_THRESHOLD = 2
 def at_rest():
@@ -370,26 +398,47 @@ async def set_idle():
     disable()
     state = State.Idle
 
-async def set_stopwatch():
+async def set_timer():
     global state, t_start, t_last, t_total, position
     enable()
-    state = State.Stopwatch
-    t_start = t_last = time.time()
+    state = State.Timer
     t_total = pos2time(position)
 
+async def set_stopwatch():
+    global state, t_start, t_last, t_total
+    _reset_motor()
+    enable()
+    state = State.Stopwatch
+    time.sleep(0.1)
+    t_total = pos2time(position)
+    
+
+def get_state():
+    global position
+    if position < POSITION_MAX//2:
+        return State.Timer
+    else:
+        return State.Stopwatch
+    
+
 async def handle_state():
-    global state, position, last_moved, t_start, t_last, t_total
+    global state, position, last_moved
+    global t_start, t_last, t_total
     
     while True:
         print(f"State: {state}")
         if state == State.Idle:
             if not at_reset() and at_rest():
-                await set_stopwatch()
+                t_start = t_last = time.time()
+                if get_state() == State.Timer:
+                    await set_timer()
+                else:
+                    await set_stopwatch()
             # If not at reset position
             # and last moved 2(?) seconds ago,
-            # transition to Stopwatch
+            # transition to Timer
             pass
-        elif state == State.Stopwatch:
+        elif state == State.Timer:
             t_last = await _tick(t_start, t_last, t_total)
             # tick()
             if at_reset() or last_moved > t_start:
@@ -400,8 +449,18 @@ async def handle_state():
             # if at reset position
             # transition to Idle
             pass
-        await asyncio.sleep_ms(10)
+        elif state == State.Stopwatch:
+            t_last = await _tick(t_start, t_last, t_total)
+            if last_moved > t_start:
+                _reset_motor()
+                await set_idle()
+        # await asyncio.sleep_ms(10)
+        await asyncio.sleep_ms(1)
 
+
+
+def moving_threshold(velocity):
+    return close_to_end(velocity)
 
 # def moving_thread():
 async def moving_thread():
@@ -409,25 +468,28 @@ async def moving_thread():
     global position
     global ENABLED
     while True:
-        position = get_position()
+        # position = get_position()
         # print("velocity")
         try:
             present_velocity = safe_get("present_velocity")
-            if present_velocity is not None and present_velocity > 0 and not ENABLED:
+            # if present_velocity is not None and present_velocity > 0 and not ENABLED:
+            if present_velocity is not None and not close_to_end(present_velocity) and not ENABLED:
                 last_moved = time.time()
                 
                 print("VELOCITY", present_velocity)
         except:
             pass
 
-        await asyncio.sleep_ms(10)
+        # await asyncio.sleep_ms(10)
+        await asyncio.sleep_ms(1)
         # time.sleep(0.1)
 
 async def loop_async():
     while True:
         # listen_write()
         position2led()
-        await asyncio.sleep_ms(10)
+        await asyncio.sleep_ms(1)
+        # await asyncio.sleep_ms(10)
         # time.sleep(0.1)
 
 def main():
@@ -446,6 +508,7 @@ def main():
             moving_thread(),
             loop_async(),
             handle_state(),
+            get_position(),
         )
     asyncio.run(_main())
     # loop()
