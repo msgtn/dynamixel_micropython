@@ -1,7 +1,7 @@
 import time
 from dynamixel_python import DynamixelManager
 
-from neopixel_12 import np, NP_COUNT, NP_PIN, COLORS, COLOR_TUPLES
+from neopixel_12 import np, NP12_COUNT, NP12_PIN, COLORS, COLOR_TUPLES
 
 USB_PORT = '/dev/tty.usbmodem101'
 
@@ -55,12 +55,12 @@ def listen_write():
         pos = testMotor.get_present_position()
     except:
         return
-    clock_pos = int(pos/4096*NP_COUNT)
-    clock_pos = min(NP_COUNT, clock_pos)
+    clock_pos = int(pos/4096*NP12_COUNT)
+    clock_pos = min(NP12_COUNT, clock_pos)
     print(clock_pos)
     for i in range(clock_pos):
         np[i] = (i,0,0,0)
-    for j in range(clock_pos, NP_COUNT):
+    for j in range(clock_pos, NP12_COUNT):
         np[j] = (0,0,0,0)
     np.write()
 

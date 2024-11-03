@@ -6,7 +6,7 @@ import asyncio
 import gc
 gc.enable()
 
-from neopixel_12 import np, NP_COUNT, NP_PIN, COLORS, COLOR_TUPLES
+from neopixel_12 import np12, NP12_COUNT, NP12_PIN, COLORS, COLOR_TUPLES
 
 USB_PORT = '/dev/tty.usbmodem101'
 
@@ -29,13 +29,14 @@ TIMESCALES = [
     7,          # days-weeks
     4,          # weeks-months
     12,         # months-years
-10,             # years-decade
-
+    10,         # years-decade
+    7.4,        # decades-life
 ]
-# TIMESCALES_CUMU = list(accumulate(a, lambda x,y: x*y))
-TIMESCALES_CUMU = [60,
-    # 120,
-3600, 86400, 604800, 2419200, 29030400, 290304000]
+TIMESCALES_CUMU = [TIMESCALES[0]]
+for timescale in TIMESCALES[1:]:
+    TIMESCALES_CUMU.append(TIMESCALES_CUMU[-1]*timescale)
+
+print(TIMESCALES_CUMU)
 
 # def single_motor_example():
 """
@@ -178,35 +179,15 @@ def position2rots_rel(position=None):
 
 # def listen_write(pos=None):
 @global_position
-def position2led(position=None, *args, **kwargs):
+def position2led(position=None, np=np12, *args, **kwargs):
     global breath_mult
-    # read_attempts = 0
-    # pos = None
-    # while read_attempts < 10:
-    #     try:
-    #         pos = motor.get_present_position()
-    #         break
-    #     except:
-    #         read_attempts += 1
-    # if pos is None:
-    #     return 
-    # if position is None:
-    #     position = safe_get("present_position", attempts=10)
-    # if not position:
-    #     return
+    np_count = len(np)
     rots, rel_pos = position2rots_rel(position)
-    # rots = position//4096
-    # rel_pos = position%4096
-    # clock_pos = int(pos/4096*NP_COUNT)
-    # clock_pos = int((pos%4096)/4096*NP_COUNT)
-    clock_pos = rel_pos/4096*NP_COUNT
-    clock_pos = min(NP_COUNT, clock_pos)
+    clock_pos = rel_pos / 4096 * np_count
     rots %= len(TIMESCALES_CUMU)
-    # print(rots)
     total_time = TIMESCALES_CUMU[rots]*(rel_pos/4096)
     if rots > 0:
         total_time = max(TIMESCALES_CUMU[rots-1], total_time)
-    # print(total_time)
     if clock_pos < 1:
         if rots > 0 or clock_pos > 0.1:
             clock_pos = 1
@@ -217,21 +198,28 @@ def position2led(position=None, *args, **kwargs):
     color_tuple = COLOR_TUPLES[rots%len(COLOR_TUPLES)]
     color_tuple = tuple([int(i*breath_mult) for i in color_tuple])
     for i in range(clock_pos):
-        # np[i] = (1,0,0,0)
+        # np12[i] = (1,0,0,0)
         np[i] = color_tuple
-    for j in range(clock_pos, NP_COUNT):
+    for j in range(clock_pos, np_count):
         np[j] = (0,0,0,0)
-    np.write()
+    np12.write()
    
 @global_position
-def pos2time(position=None):
+def position2time(position=None):
     rots, rel_pos = position2rots_rel(position)
     norm_pos = rel_pos/4096
     scale = TIMESCALES_CUMU[min(rots, len(TIMESCALES_CUMU)-1)]
     ret = norm_pos*scale
     return ret
 
-def time2pos(t):
+@global_position
+def position2value(position=None):
+    # convert a position to its mapped value on the given timescale
+    rots, rel_pos = position2rots_rel(position)
+    norm_pos = rel_pos / 4096
+    return ceil(norm_pos*TIMESCALES[rots])
+
+def time2position(t):
     rots = 0 
     while t > TIMESCALES_CUMU[rots]:
         rots += 1
@@ -249,7 +237,7 @@ def tick():
     pos_start = position
     # Calculate the set time in seconds
     # total_time = pos_start/4096*60
-    t_total = t_left = pos2time(pos_start)
+    t_total = t_left = position2time(pos_start)
     # get how much time to tick for
     # home position is 0
     # while safe_get("present_position") > 10:
@@ -301,7 +289,7 @@ def tick():
         #     del_pos += int(del_t/TIMESCALES_CUMU[i]*4096  )
         # pos_t = pos_start - del_pos
         t_left = max(t_total-del_t, 0)
-        pos_t = time2pos(t_left)
+        pos_t = time2position(t_left)
         pos_t = max(2, pos_t)
         print(t_left, del_t, position, pos_t)
         
@@ -330,7 +318,7 @@ async def _tick(t_start, t_last, t_total):
 
     if state == State.Timer:
         t = max(t_total - t, 0)
-    position_t = time2pos(t)
+    position_t = time2position(t)
     position_t = min(max(position_t, POSITION_MIN), POSITION_MAX)
     print(t_total, t, position, position_t)
     # while not motor.set_goal_position(position_t):
@@ -350,8 +338,6 @@ async def _tick(t_start, t_last, t_total):
 # enable = partial(motor.set_torque_enable(True))
 # def safe_write(attr, attempts=float('inf'))
 
-
-
 def loop():
     while True:
         listen_write()
@@ -365,10 +351,10 @@ def breathe():
     # i = 0
     while True:
         # i %= 10
-        # for n,_np in enumerate(np):
-        #     np[n] = tuple([int(_n*(i+1)) for _n in _np])
-        # # print([n for n in np])
-        # np.write()
+        # for n,_np in enumerate(np12):
+        #     np12[n] = tuple([int(_n*(i+1)) for _n in _np])
+        # # print([n for n in np12])
+        # np12.write()
         # i += 1
         for i in range(10):
             breath_mult += 0.2
@@ -402,7 +388,7 @@ async def set_timer():
     global state, t_start, t_last, t_total, position
     enable()
     state = State.Timer
-    t_total = pos2time(position)
+    t_total = position2time(position)
 
 async def set_stopwatch():
     global state, t_start, t_last, t_total
@@ -410,7 +396,7 @@ async def set_stopwatch():
     enable()
     state = State.Stopwatch
     time.sleep(0.1)
-    t_total = pos2time(position)
+    t_total = position2time(position)
     
 
 def get_state():

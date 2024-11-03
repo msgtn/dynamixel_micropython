@@ -2,9 +2,12 @@ import machine, neopixel
 import time
 from collections import OrderedDict
 
-NP_PIN = 16
-NP_COUNT = 12
-np = neopixel.NeoPixel(machine.Pin(NP_PIN), NP_COUNT, bpp=4)
+NP12_PIN = 16
+NP24_PIN = 17   
+NP12_COUNT = 12
+NP24_COUNT = 24
+np12 = neopixel.NeoPixel(machine.Pin(NP12_PIN), NP12_COUNT, bpp=4)
+np24 = neopixel.NeoPixel(machine.Pin(NP24_PIN), NP24_COUNT, bpp=4)
 COLORS = OrderedDict()
 COLORS.update({'R':(255,0,0,0)})
 COLORS.update({   'O':(255,127,0,0)})
@@ -28,18 +31,18 @@ COLOR_TUPLES = [tuple([t//16 for t in tup]) for tup in COLOR_TUPLES]
 
 def red_ring(delay=0.05, scale=1):
     for i in range(2):
-        for j in range(NP_COUNT):
-            np[j] = (i*scale, 0, 0, 0)
-            np.write()
+        for j in range(NP12_COUNT):
+            np12[j] = (i*scale, 0, 0, 0)
+            np12.write()
             time.sleep(delay)
 
 def rainbow(delay=0.05):
     pass
 
 def write_all(tup):
-    for j in range(NP_COUNT):
-        np[j] = tup
-    np.write()
+    for j in range(NP12_COUNT):
+        np12[j] = tup
+    np12.write()
 
 def write_to(tup_0, tup_1, steps=10, delay=0.05):
     print(tup_0, tup_1)
@@ -47,13 +50,13 @@ def write_to(tup_0, tup_1, steps=10, delay=0.05):
     for i in range(steps):
         tup_i = tuple([t0+int(i/steps*dt) for t0,dt in zip(tup_0,del_tup)])
         # print(tup_i)
-        np.fill(tup_i)
-        np.write()
+        np12.fill(tup_i)
+        np12.write()
         time.sleep(delay)
 
 if __name__=="__main__":
-    np.fill(COLORS['R'])
-    np.write()
+    np12.fill(COLORS['R'])
+    np12.write()
     STEPS = 10
     DELAY = 0.01
    
