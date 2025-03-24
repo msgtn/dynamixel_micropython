@@ -7,6 +7,8 @@ import _thread
 import asyncio
 from math import ceil
 import gc
+import logging
+logging.basicConfig(level=logging.WARNING)
 
 gc.enable()
 import network
@@ -52,6 +54,9 @@ DEGREE_RESET_THRESHOLD = 5
 POSITION_RESET_THRESHOLD = 4096 / 360 * DEGREE_RESET_THRESHOLD
 VALUE_RESET_THRESHOLD = POSITION_RESET_THRESHOLD
 POSITION_RESET = 0
+MOVE_THRESHOLD = 2
+AMPLITUDE_WAG = 400
+POSITION_WAG = AMPLITUDE_WAG
 # POSITION_RESET = VALUE_MAX - POSITION_RESET
 
 TIMESCALES = [
@@ -61,8 +66,9 @@ TIMESCALES = [
     7,  # days-weeks
     4,  # weeks-months
     12,  # months-years
-    10,  # years-decade
-    7.4,  # decades-life
+    84,     # years-life
+    # 10,  # years-decade
+    # 8.4,  # decades-life
 ]
 TIMESCALES_CUMU = [TIMESCALES[0]]
 for timescale in TIMESCALES[1:]:
@@ -79,7 +85,7 @@ motors.init()
 
 # def safe_io(attr, _operation="get", attempts=float('inf'), *args, **kwargs):
 def safe_io(attr, _operation="get", *args, **kwargs):
-    print(attr, _operation, args, kwargs)
+    # logging.warning(attr, _operation, args, kwargs)
     if not hasattr(motor, f"{_operation}_{attr}"):
         return
     io_attr_fn = getattr(motor, f"{_operation}_{attr}")
@@ -91,8 +97,8 @@ def safe_io(attr, _operation="get", *args, **kwargs):
     attempt_ctr = 0
     while attempts > 0:
         # while True:
-        # print("reading")
-        # print(f"attempts: {attempt_ctr}")
+        # logging.warning("reading")
+        # logging.warning(f"attempts: {attempt_ctr}")
         try:
             ret = io_attr_fn(*args, **kwargs)
             if _operation == "set" and ret:
@@ -131,15 +137,16 @@ def connect_wifi(network_configs=NETWORK_CONFIGS):
             _filepath = f"{network_configs}/{network_config_file}"
             with open(_filepath, "r") as _file:
                 output = _file.read()
-                print(output)
+                logging.warning(output)
                 # [ssid, key, TIMEZONE] = _file.read().split("\n")[:3]
                 [ssid, key, TIMEZONE] = output.split("\n")[:3]
-            print(f"SSID: {ssid}, key: {key}, timezone: {TIMEZONE}")
+            logging.warning(f"SSID: {ssid}, key: {key}, timezone: {TIMEZONE}")
 
             wifi = network.WLAN(network.STA_IF)
             wifi.active(True)
-            attempt_ctr = 10
+            attempt_ctr = 3
             while attempt_ctr > 0 and not wifi.isconnected():
+                print("Trying to connect")
                 wifi.connect(ssid, key)
                 attempt_ctr -= 1
 
@@ -152,15 +159,15 @@ def connect_wifi(network_configs=NETWORK_CONFIGS):
 
         except:
             if ssid is not None:
-                print(
+                logging.warning(
                     f"Could not connect to network '{ssid}', are the credentials correct?"
                 )
             elif network_config_file not in os.listdir(network_configs):
-                print(
+                logging.warning(
                     "Could not connect to wifi, is '{network_config_file}' formatted as '\{ssid\}\\n\{key\}'?"
                 )
             else:
-                print(
+                logging.warning(
                     "Could not connect to wifi, could not find network config file {network_config_file}"
                 )
 
@@ -172,24 +179,60 @@ def connect_wifi(network_configs=NETWORK_CONFIGS):
 TIME_TUPLE_INDEX = ["year", "month", "day", "hour", "minute", "second", "millisecond"]
 
 
-def time2led(*args, **kwargs):
+def time2led(t_alarm=None, clear=True, *args, **kwargs):
     global state
     if state not in [State.Idle, State.Alarm]:
         return
     index_hour, index_minute = time2index()
-    index2led(index_hour, index_minute, *args, **kwargs)
+    np12_idxs, np24_idxs, colors = [index_hour], [index_minute], [(0,0,0,64)]
 
 
-def index2led(index_hour, index_minute, colors=(0, 0, 0, 1), write_fn=None):
+    if t_alarm is not None:
+        [alarm_hour, alarm_minute] = time.localtime(t_alarm)[3:5]
+        [index_alarm_hour, index_alarm_minute] = time2index(alarm_hour, alarm_minute)
+
+        alarm_colors = (64,0,0,0) if alarm_hour < 12 else (0,0,64,0)
+        np12_idxs.append(index_alarm_hour)
+        np24_idxs.append(index_alarm_minute)
+        colors.append(alarm_colors)
+        # index2led(index_alarm_hour, index_alarm_minute, colors=alarm_colors, write=False)
+    # if clear:
+    #     np_clear(np12)
+    #     np_clear(np24)
+    # index2led(index_hour, index_minute, write=True)
+    # logging.warning(f"NP12: {np12_idxs}")
+    # logging.warning(f"NP24: {np24_idxs}")
+    for np,idxs in zip([np12, np24], [np12_idxs, np24_idxs]):
+        # np_clear(np)
+        np.fill((0,0,0,0))
+        for i,color in zip(idxs,colors):
+            np_i = list(np[_idx(i)])
+            np_i = tuple([n+c for n,c in zip(np_i, color)])
+            np[_idx(i)] = np_i
+        np.write()
+
+    
+    # np12.write()
+    # np24.write()
+
+def np_clear(np):
+    np.fill((0,0,0,0))
+    np.write()
+
+
+def index2led(index_hour, index_minute, colors=(0, 0, 0, 127), write_fn=None, write=True):
     for np, i in zip([np12, np24], [index_hour, index_minute]):
         if write_fn is None:
-            np.fill((0, 0, 0, 0))
+            # np.fill((0, 0, 0, 0))
             np[_idx(i)] = colors
-            np.write()
+            if write:
+                np.write()
+            # np.write()
         else:
             new_vals = [(0, 0, 0, 0)] * len(np)
             new_vals[i] = colors
             write_fn(np, new_vals)
+
 
 
 def _idx(i):
@@ -209,10 +252,10 @@ def get_time():
     global wifi
 
     if wifi is None:
-        print("Wifi not initialized, time is not accurate")
+        logging.warning("Wifi not initialized, time is not accurate")
         return -1, -1
     # while not wifi.isconnected():
-    #     print("Wifi not connected, retrying")
+    #     logging.warning("Wifi not connected, retrying")
     #     connect_wifi()
 
     #     time.sleep(0.1)
@@ -267,49 +310,6 @@ async def get_position():
         await asyncio.sleep_ms(1)
     # return  _get_position()
 
-
-position = _get_position()
-
-
-async def reset_motor():
-    await _reset_motor()
-
-
-def _reset_motor():
-    global position
-    position = _get_position()
-    # disable()
-    # time.sleep(0.1)
-    motor.set_led(True)
-
-    # while not motor.get_torque_enable():
-    # motor.set_torque_enable(True)f
-    time.sleep(0.1)
-    enable()
-    time.sleep(0.1)
-    # time.sleep(0.5)
-    # motor.set_profile_velocity(262)
-    safe_set("profile_velocity", 262)
-    # motor.set_goal_position(POSITION_RESET)
-    while not at_reset():
-        position = _get_position()
-        if position > 2**16:
-            safe_set("goal_position", VALUE_MAX)
-        else:
-            safe_set("goal_position", VALUE_MIN)
-
-        # safe_set("goal_position", POSITION_RESET)
-
-        print("Not at reset")
-
-        time.sleep(0.1)
-
-    disable()
-    time.sleep(0.1)
-
-    motor.set_led(False)
-
-
 def global_position(fn):
     def _fn(*args, **kwargs):
         global position
@@ -352,7 +352,8 @@ def position2led(position=None, np=np12, *args, **kwargs):
         clock_pos = round(clock_pos)
     color_tuple = COLOR_TUPLES[rots % len(COLOR_TUPLES)]
     color_tuple = tuple([int(i * breath_mult) for i in color_tuple])
-    print(f"{clock_pos: 05d}")
+    # logging.warning(f"{clock_pos: 05d}")
+    logging.debug(f"Clock position: {clock_pos:032d}")
     for i in range(clock_pos):
         # np12[i] = (1,0,0,0)
         np[_idx(i)] = color_tuple
@@ -369,9 +370,9 @@ def position2led_value(position=None, np=np24, *args, **kwargs):
     led_2 = digit_2 * 2 + 1
     np.fill((0, 0, 0, 0))
     if digit_1 > 0:
-        np[_idx(led_1)] = (1, 0, 0, 0)
+        np[_idx(led_1)] = (32, 0, 0, 0)
     if not at_reset():
-        np[_idx(led_2)] = (0, 0, 1, 0)
+        np[_idx(led_2)] = (0, 0, 32, 0)
     np.write()
 
 
@@ -389,6 +390,10 @@ def position2value(position=None):
     # convert a position to its mapped value on the given timescale
     rots, rel_pos = position2rots_rel(position)
     norm_pos = rel_pos / 4096
+    # Special case: if in decades-life, show age instead
+    if rots == 6:
+        norm_pos = 1 - norm_pos
+        logging.warning("In decades-life, inverting to show age")
     ret = ceil(norm_pos * TIMESCALES[rots])
     return ret
 
@@ -397,10 +402,56 @@ def position2value(position=None):
 def position2digits(position=None):
     value = position2value(position)
     ret = f"{value:02d}"
-    print(ret)
+    logging.warning(ret)
     ret = [int(i) for i in ret]
     return ret
 
+
+
+
+position = _get_position()
+last_rot, _ = position2rots_rel(position)
+
+async def reset_motor():
+    await _reset_motor()
+
+
+def _reset_motor():
+    global position, ENABLED
+    position = _get_position()
+    # disable()
+    # time.sleep(0.1)
+    motor.set_led(True)
+
+    # while not motor.get_torque_enable():
+    # motor.set_torque_enable(True)f
+    time.sleep(0.1)
+    enable()
+    ENABLED = True
+    time.sleep(0.1)
+    # time.sleep(0.5)
+    # motor.set_profile_velocity(262)
+    safe_set("profile_velocity", 262)
+    # motor.set_goal_position(POSITION_RESET)
+    while not at_reset():
+        position = _get_position()
+        # if position > 2**16:
+        if position > POSITION_MAX // 2:
+            safe_set("goal_position", VALUE_MAX)
+        else:
+            safe_set("goal_position", VALUE_MIN)
+
+        # safe_set("goal_position", POSITION_RESET)
+
+        logging.warning("Not at reset")
+
+        time.sleep(0.1)
+
+    disable()
+    ENABLED = False
+    time.sleep(0.1)
+
+    motor.set_led(False)
 
 def time2position(t):
     rots = 0
@@ -440,7 +491,7 @@ def tick():
     last_scale = None
     # while pos and pos > 0:
     while position and t_left > 0:
-        print(position)
+        logging.warning(position)
         # rots = pos//4096
         # pos_rel = pos%4096
         # scale = TIMESCALES_CUMU[rots]
@@ -467,7 +518,7 @@ def tick():
 
             # _del_pos = int(del_t/scale*4096)
             # del2_pos = _del_pos-del_pos
-            # print(del2_pos)
+            # logging.warning(del2_pos)
         t = time.time()
         del_t = time.time() - t_start
         # del_t = _del_t
@@ -480,7 +531,8 @@ def tick():
         t_left = max(t_total - del_t, 0)
         pos_t = time2position(t_left)
         pos_t = max(2, pos_t)
-        print(t_left, del_t, position, pos_t)
+        logging.warning(
+            f"{t_left}, {del_t}, {position}, {pos_t}")
 
         # motor.set_torque_enable(True)
         while not motor.set_goal_position(pos_t):
@@ -500,6 +552,8 @@ def tick():
 # atomic tick function
 async def _tick(t_start, t_last, t_total):
     global position, ENABLED, state
+    # if POSITION_MAX // 2 < position < POSITION_MAX - 4096:
+    #     return -1
     # if time.time()-t_last < 1:
     #    return t_last
     while time.time() - t_last < 1:
@@ -510,11 +564,14 @@ async def _tick(t_start, t_last, t_total):
         t = max(t_total - t, 0)
     position_t = time2position(t)
     position_t = min(max(position_t, POSITION_MIN), POSITION_MAX)
-    print(t_total, t, position, position_t)
+    logging.warning(
+        f"{t_total}, {t}, {position}, {position_t}"
+        )
     # while not motor.set_goal_position(position_t):
     # enable()
-    time.sleep(0.1)
+    # time.sleep(0.1)
     ENABLED = True
+    # enable()
     while not safe_set("goal_position", position_t):
         time.sleep(0.1)
     time.sleep(0.1)
@@ -548,7 +605,7 @@ def breathe():
         # i %= 10
         # for n,_np in enumerate(np12):
         #     np12[n] = tuple([int(_n*(i+1)) for _n in _np])
-        # # print([n for n in np12])
+        # # logging.warning([n for n in np12])
         # np12.write()
         # i += 1
         for i in range(10):
@@ -558,26 +615,6 @@ def breathe():
             breath_mult -= 0.2
             time.sleep(0.1)
         # breath_mult = (breath_mult%10)+1
-
-
-AMPLITUDE_WAG = 400
-POSITION_WAG = AMPLITUDE_WAG
-
-
-async def _wag(n_wag=2, delay=0.5):
-    global ENABLED
-    ENABLED = True
-    _reset_motor()
-    time.sleep(delay)
-    for _ in range(n_wag):
-        for i in [1, -1]:
-            safe_set("goal_position", i * AMPLITUDE_WAG)
-            time.sleep(delay)
-
-    safe_set("goal_position", 0)
-    time.sleep(delay)
-    disable()
-    ENABLED = False
 
 
 async def wag(delay=0.1):
@@ -602,12 +639,8 @@ def at_reset():
 def close_to_end(
     x,
 ):
-    print(x)
     del_x = min(abs(VALUE_MAX - x), abs(VALUE_MIN - x))
     return del_x < VALUE_RESET_THRESHOLD
-
-
-MOVE_THRESHOLD = 2
 
 
 def at_rest():
@@ -625,7 +658,10 @@ async def set_timer():
     global state, t_start, t_last, t_total, position
     enable()
     state = State.Timer
+    position = _get_position()
     t_total = position2time(position)
+    
+    logging.warning(f"Starting timer with {t_total}s")
 
 
 async def set_alert():
@@ -638,6 +674,7 @@ async def set_alarm():
     state = State.Alarm
     position = _get_position()
     t_alarm = position2alarm(position)
+    t_last = time.time()
 
 
 ALARM_TIME = 0
@@ -653,7 +690,7 @@ def position2alarm(position=None):
     # max_rots = 2**32 / 4096 = 2**32 / 2**12
     # max_rots = 2**20
     del_rots = 2**20 - rots
-    print(f"del rots {del_rots}")
+    logging.warning(f"del rots {del_rots}")
 
     # if outside of 2 or 3 revolutions away,
     # end timer mode
@@ -679,9 +716,9 @@ def position2alarm(position=None):
 
 
 def get_time_alarm(hour, minute):
-    t_now = time.time()
-    local_now = time.localtime(t_now + OFFSET)
-    print(f"local now: {local_now}")
+    t_now = time.time() + OFFSET
+    local_now = time.localtime(t_now)
+    logging.warning(f"local now: {local_now}")
     for del_day in [0, 1]:
         local_alarm = list(local_now)
         local_alarm[2] = local_alarm[2] + del_day
@@ -695,9 +732,10 @@ def get_time_alarm(hour, minute):
 
         # if alarm time is earlier than current time,
         # add another day
-        print(t_alarm, t_now)
-        print(local_alarm, local_now)
-        if t_alarm > t_now:
+        logging.warning(f"{t_alarm}, {t_now}")
+        logging.warning(
+            f"{local_alarm}, {local_now}")
+        if t_alarm >= t_now:
             return t_alarm
 
 
@@ -733,11 +771,13 @@ def get_state():
 
 
 async def handle_state():
-    global state, position, last_moved
+    global state, position, last_moved, last_rot
     global t_start, t_last, t_total, t_alarm
+    global ENABLED
+
 
     while True:
-        print(f"State: {state}")
+        logging.debug(f"State: {state}")
         if state == State.Idle:
             # if not at_reset() and at_rest():
             #     t_start = t_last = time.time()
@@ -769,13 +809,25 @@ async def handle_state():
             # transition to Timer
             pass
         elif state == State.Timer:
-            t_last = await _tick(t_start, t_last, t_total)
-            print("TIMER", t_start, t_last, t_total)
-            # tick()
+           # tick()
             # if at_reset() or last_moved > t_start:
             if last_moved > t_start:
-                _reset_motor()
-                await set_idle()
+                if ENABLED:
+                    disable()
+                if at_rest():
+                    position = _get_position()
+                    if (POSITION_MAX // 2) < position < POSITION_MAX:
+                        _reset_motor()
+                        await set_idle()
+                    else:
+                        t_start = t_last = time.time()
+                        await set_timer()
+                # if cur_rot == last_rot:
+                #     t_start = t_last = time.time()
+                #     await set_timer()
+                # else:
+                #     _reset_motor()
+                #     await set_idle()
 
             elif at_reset():
 
@@ -783,6 +835,16 @@ async def handle_state():
                 # await set_idle()
 
                 await set_alert()
+            else:
+                t_last = await _tick(t_start, t_last, t_total)
+                # if t_last == -1:
+                #     _reset_motor()
+                #     await set_idle()
+                # else:
+                logging.warning(
+                    f"TIMER, {t_start}, {t_last}, {t_total}")
+                cur_rot, _ = position2rots_rel(position)
+                last_rot = cur_rot
 
         elif state == State.Stopwatch:
             t_last = await _tick(t_start, t_last, t_total)
@@ -792,6 +854,7 @@ async def handle_state():
         elif state == State.Alert:
             await wag()
             if last_moved > t_start:
+                logging.warning(f"Stopping because {last_moved} > {t_start}")
                 _reset_motor()
                 await set_idle()
         # await asyncio.sleep_ms(10)
@@ -799,18 +862,23 @@ async def handle_state():
             position = _get_position()
 
             _t_alarm = position2alarm(position)
+            _t_last = time.time() + OFFSET
             if _t_alarm == -1:
                 _reset_motor()
                 await set_idle()
             else:
-                time2led()
-                print(f"state check, {time.time()}, {t_alarm}")
-                if time.time() >= t_alarm:
+                time2led(t_alarm=_t_alarm)
+                logging.warning(f"state check, {_t_last}, {t_alarm}")
+                # if _t_last >= t_alarm:
+                # If within 10 seconds either side of the alarm, trigger
+                if abs(_t_last - _t_alarm) < 10:
                     _reset_motor()
+                    t_start = time.time()
                     await set_alert()
-                else:
+                elif _t_last > (t_last + 4) :
                     t_alarm = _t_alarm
-                    print(f"Set alarm for {time.localtime(t_alarm)}")
+                    t_last = t_alarm
+                    logging.warning(f"Set alarm for {time.localtime(t_alarm)}")
         await asyncio.sleep_ms(1)
 
 
@@ -833,8 +901,6 @@ async def moving_thread():
     global position
     global ENABLED
     while True:
-        # position = get_position()
-        # print("velocity")
         try:
             if not ENABLED:
 
@@ -842,13 +908,13 @@ async def moving_thread():
                 # if present_velocity is not None and present_velocity > 0 and not ENABLED:
                 if present_velocity is not None and not close_to_end(present_velocity):
                     last_moved = time.time()
-                    print("VELOCITY", present_velocity)
+                    logging.warning(
+                        f"VELOCITY, {present_velocity}")
         except:
             pass
 
         # await asyncio.sleep_ms(10)
         await asyncio.sleep_ms(1)
-        # time.sleep(0.1)
 
 
 async def loop_pos2led():
@@ -891,6 +957,8 @@ def main():
     # async_loop.create_task(moving_thread())
     # async_loop.run_forever()
 
+    connect_wifi()
+
     async def _main():
         await asyncio.gather(
             moving_thread(),
@@ -904,7 +972,7 @@ def main():
 
 
 if __name__ == "__main__":
-    connect_wifi()
+    # connect_wifi()
     #     break
     main()
 # if __name__ == '__main__':

@@ -5,7 +5,7 @@ from collections import OrderedDict
 # NP12_PIN = 16
 # NP24_PIN = 17   
 NP12_PIN = 2
-NP24_PIN =  3  
+NP24_PIN =  4  
 NP12_COUNT = 12
 NP24_COUNT = 24
 np12 = neopixel.NeoPixel(machine.Pin(NP12_PIN), NP12_COUNT, bpp=4)
