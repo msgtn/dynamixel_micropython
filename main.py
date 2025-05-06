@@ -1,17 +1,18 @@
-import os
-import time
-from dynamixel_python import DynamixelManager
-
-# from itertools import accumulate
-import _thread
 import asyncio
-from math import ceil
 import gc
 import logging
+import os
+import time
+from math import ceil
+
+import network
+
+from dynamixel_python import DynamixelManager
+from neopixel_12 import COLOR_TUPLES, np12, np24
+
 logging.basicConfig(level=logging.WARNING)
 
 gc.enable()
-import network
 
 # import ntptime
 
@@ -33,9 +34,6 @@ def set_offset(timezone):
 
 set_offset(TIMEZONE)
 
-
-from neopixel_12 import np12, NP12_COUNT, NP12_PIN, COLORS, COLOR_TUPLES
-from neopixel_12 import np24, NP24_COUNT, NP24_PIN, COLORS, COLOR_TUPLES
 
 INVERT_NEOPIXELS = False
 INVERT_NEOPIXELS = True
@@ -75,9 +73,6 @@ for timescale in TIMESCALES[1:]:
     TIMESCALES_CUMU.append(TIMESCALES_CUMU[-1] * timescale)
 
 
-"""
-turn on a single dynamixel and sweep it between position 0 and position 1024 three times
-"""
 motors = DynamixelManager(USB_PORT, baud_rate=BAUDRATE)
 motor = motors.add_dynamixel("motor", ID, DYNAMIXEL_MODEL)
 motors.init()
@@ -176,7 +171,8 @@ def connect_wifi(network_configs=NETWORK_CONFIGS):
     return wifi.isconnected()
 
 
-TIME_TUPLE_INDEX = ["year", "month", "day", "hour", "minute", "second", "millisecond"]
+TIME_TUPLE_INDEX = ["year", "month", "day",
+                    "hour", "minute", "second", "millisecond"]
 
 
 def time2led(t_alarm=None, clear=True, *args, **kwargs):
@@ -184,14 +180,15 @@ def time2led(t_alarm=None, clear=True, *args, **kwargs):
     if state not in [State.Idle, State.Alarm]:
         return
     index_hour, index_minute = time2index()
-    np12_idxs, np24_idxs, colors = [index_hour], [index_minute], [(0,0,0,64)]
-
+    np12_idxs, np24_idxs, colors = [index_hour], [
+        index_minute], [(0, 0, 0, 64)]
 
     if t_alarm is not None:
         [alarm_hour, alarm_minute] = time.localtime(t_alarm)[3:5]
-        [index_alarm_hour, index_alarm_minute] = time2index(alarm_hour, alarm_minute)
+        [index_alarm_hour, index_alarm_minute] = time2index(
+            alarm_hour, alarm_minute)
 
-        alarm_colors = (64,0,0,0) if alarm_hour < 12 else (0,0,64,0)
+        alarm_colors = (64, 0, 0, 0) if alarm_hour < 12 else (0, 0, 64, 0)
         np12_idxs.append(index_alarm_hour)
         np24_idxs.append(index_alarm_minute)
         colors.append(alarm_colors)
@@ -202,21 +199,21 @@ def time2led(t_alarm=None, clear=True, *args, **kwargs):
     # index2led(index_hour, index_minute, write=True)
     # logging.warning(f"NP12: {np12_idxs}")
     # logging.warning(f"NP24: {np24_idxs}")
-    for np,idxs in zip([np12, np24], [np12_idxs, np24_idxs]):
+    for np, idxs in zip([np12, np24], [np12_idxs, np24_idxs]):
         # np_clear(np)
-        np.fill((0,0,0,0))
-        for i,color in zip(idxs,colors):
+        np.fill((0, 0, 0, 0))
+        for i, color in zip(idxs, colors):
             np_i = list(np[_idx(i)])
-            np_i = tuple([n+c for n,c in zip(np_i, color)])
+            np_i = tuple([n+c for n, c in zip(np_i, color)])
             np[_idx(i)] = np_i
         np.write()
 
-    
     # np12.write()
     # np24.write()
 
+
 def np_clear(np):
-    np.fill((0,0,0,0))
+    np.fill((0, 0, 0, 0))
     np.write()
 
 
@@ -232,7 +229,6 @@ def index2led(index_hour, index_minute, colors=(0, 0, 0, 127), write_fn=None, wr
             new_vals = [(0, 0, 0, 0)] * len(np)
             new_vals[i] = colors
             write_fn(np, new_vals)
-
 
 
 def _idx(i):
@@ -254,11 +250,6 @@ def get_time():
     if wifi is None:
         logging.warning("Wifi not initialized, time is not accurate")
         return -1, -1
-    # while not wifi.isconnected():
-    #     logging.warning("Wifi not connected, retrying")
-    #     connect_wifi()
-
-    #     time.sleep(0.1)
 
     t = time.localtime(time.time() + OFFSET)
     # t = time.localtime(time.time() + 0)
@@ -309,6 +300,7 @@ async def get_position():
         position = _get_position()
         await asyncio.sleep_ms(1)
     # return  _get_position()
+
 
 def global_position(fn):
     def _fn(*args, **kwargs):
@@ -407,10 +399,9 @@ def position2digits(position=None):
     return ret
 
 
-
-
 position = _get_position()
 last_rot, _ = position2rots_rel(position)
+
 
 async def reset_motor():
     await _reset_motor()
@@ -452,6 +443,7 @@ def _reset_motor():
     time.sleep(0.1)
 
     motor.set_led(False)
+
 
 def time2position(t):
     rots = 0
@@ -552,10 +544,6 @@ def tick():
 # atomic tick function
 async def _tick(t_start, t_last, t_total):
     global position, ENABLED, state
-    # if POSITION_MAX // 2 < position < POSITION_MAX - 4096:
-    #     return -1
-    # if time.time()-t_last < 1:
-    #    return t_last
     while time.time() - t_last < 1:
         continue
     t = time.time() - t_start
@@ -566,12 +554,8 @@ async def _tick(t_start, t_last, t_total):
     position_t = min(max(position_t, POSITION_MIN), POSITION_MAX)
     logging.warning(
         f"{t_total}, {t}, {position}, {position_t}"
-        )
-    # while not motor.set_goal_position(position_t):
-    # enable()
-    # time.sleep(0.1)
+    )
     ENABLED = True
-    # enable()
     while not safe_set("goal_position", position_t):
         time.sleep(0.1)
     time.sleep(0.1)
@@ -579,12 +563,6 @@ async def _tick(t_start, t_last, t_total):
     disable()
     time.sleep(0.1)
     return time.time()
-
-
-# import functools
-# disable = partial(motor.set_torque_enable(False))
-# enable = partial(motor.set_torque_enable(True))
-# def safe_write(attr, attempts=float('inf'))
 
 
 def loop():
@@ -660,7 +638,7 @@ async def set_timer():
     state = State.Timer
     position = _get_position()
     t_total = position2time(position)
-    
+
     logging.warning(f"Starting timer with {t_total}s")
 
 
@@ -775,7 +753,6 @@ async def handle_state():
     global t_start, t_last, t_total, t_alarm
     global ENABLED
 
-
     while True:
         logging.debug(f"State: {state}")
         if state == State.Idle:
@@ -875,7 +852,7 @@ async def handle_state():
                     _reset_motor()
                     t_start = time.time()
                     await set_alert()
-                elif _t_last > (t_last + 4) :
+                elif _t_last > (t_last + 4):
                     t_alarm = _t_alarm
                     t_last = t_alarm
                     logging.warning(f"Set alarm for {time.localtime(t_alarm)}")
@@ -972,8 +949,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # connect_wifi()
-    #     break
     main()
-# if __name__ == '__main__':
-# single_motor_example()
