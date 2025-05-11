@@ -1,4 +1,4 @@
-A MicroPython port of [rdiverdi's dynamixel_python](https://github.com/rdiverdi/dynamixel_python/tree/master) library, itself a wrapper over the [official Dynamixel SDK](https://github.com/ROBOTIS-GIT/DynamixelSDK). Currently working with the Raspberry Pi Pico as a replacement for the [Dynamixel U2D2](https://emanual.robotis.com/docs/en/parts/interface/u2d2/), with the [XL330-M288 motors](https://emanual.robotis.com/docs/en/dxl/x/xl330-m288/).
+**A** MicroPython port of [rdiverdi's dynamixel_python](https://github.com/rdiverdi/dynamixel_python/tree/master) library, itself a wrapper over the [official Dynamixel SDK](https://github.com/ROBOTIS-GIT/DynamixelSDK). Currently working with the Raspberry Pi Pico as a replacement for the [Dynamixel U2D2](https://emanual.robotis.com/docs/en/parts/interface/u2d2/), with the [XL330-M288 motors](https://emanual.robotis.com/docs/en/dxl/x/xl330-m288/).
 
 # Installation
 ## Hardware
@@ -13,7 +13,7 @@ You will need to know the motor's model, baudrate, and ID. Apart from assuming t
 - Connect the board
 - Enter [`rshell`](https://github.com/dhylands/rshell)
 - Copy all of the top-level Python files to the board: `cp *.py /pyboard`
-- Copy the single-motor example to the board as the main script: `cp single_motor.py /pyboard/main.py` 
+- Copy the single-motor example to the board as the main script: `cp main.py /pyboard/main.py` 
 - Create the directory for the control tables: `mkdir /pyboard/control_tables`
 - Copy only the necessary control tables, e.g. `cp control_tables/xl330-m288.json`. The board may not have enough memory to store all of the tables.
 - Enter the `repl`
