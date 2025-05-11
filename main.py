@@ -1,14 +1,16 @@
-import asyncio
-import gc
-import logging
-import os
-import time
-from math import ceil
-
-import network
-
-from dynamixel_python import DynamixelManager
 from neopixel_12 import COLOR_TUPLES, np12, np24
+from math import ceil
+import logging
+import gc
+import asyncio
+import _thread
+from dynamixel_python import DynamixelManager
+import time
+import os
+import network
+from neopixel_12 import np12, NP12_COUNT, NP12_PIN, COLORS, COLOR_TUPLES
+from neopixel_12 import np24, NP24_COUNT, NP24_PIN, COLORS, COLOR_TUPLES
+
 
 logging.basicConfig(level=logging.WARNING)
 
@@ -53,8 +55,9 @@ POSITION_RESET_THRESHOLD = 4096 / 360 * DEGREE_RESET_THRESHOLD
 VALUE_RESET_THRESHOLD = POSITION_RESET_THRESHOLD
 POSITION_RESET = 0
 MOVE_THRESHOLD = 2
-AMPLITUDE_WAG = 400
+AMPLITUDE_WAG = 300
 POSITION_WAG = AMPLITUDE_WAG
+ALERT_OFFSET = 100
 # POSITION_RESET = VALUE_MAX - POSITION_RESET
 
 TIMESCALES = [
@@ -119,7 +122,6 @@ def safe_get(attr, attempts=float("inf"), *args, **kwargs):
     return safe_io(attr, "get", *args, **kwargs)
 
 
-DEFAULT_NETWORK_CONFIG_FILE = "./.network_config.txt"
 NETWORK_CONFIGS = "./.network_configs"
 wifi = None
 
@@ -555,6 +557,9 @@ async def _tick(t_start, t_last, t_total):
     logging.warning(
         f"{t_total}, {t}, {position}, {position_t}"
     )
+    # while not motor.set_goal_position(position_t):
+    # enable()
+    # time.sleep(0.1)
     ENABLED = True
     while not safe_set("goal_position", position_t):
         time.sleep(0.1)
@@ -599,7 +604,8 @@ async def wag(delay=0.1):
     global POSITION_WAG, ENABLED
 
     ENABLED = True
-    safe_set("goal_position", POSITION_WAG)
+    position_alert = ALERT_OFFSET + POSITION_WAG
+    safe_set("goal_position", position_alert)
     time.sleep(delay)
     disable()
     ENABLED = False
