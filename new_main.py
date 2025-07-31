@@ -64,7 +64,7 @@ TIMESCALES = [
     7,  # days-weeks
     4,  # weeks-months
     12,  # months-years
-    84,     # years-life
+    84,  # years-life
     # 10,  # years-decade
     # 8.4,  # decades-life
 ]
@@ -72,56 +72,22 @@ TIMESCALES_CUMU = [TIMESCALES[0]]
 for timescale in TIMESCALES[1:]:
     TIMESCALES_CUMU.append(TIMESCALES_CUMU[-1] * timescale)
 
-
-motors = DynamixelManager(USB_PORT, baud_rate=BAUDRATE)
-motor = motors.add_dynamixel("motor", ID, DYNAMIXEL_MODEL)
-motors.init()
-
-
-# def safe_io(attr, _operation="get", attempts=float('inf'), *args, **kwargs):
-def safe_io(attr, _operation="get", *args, **kwargs):
-    # logging.warning(attr, _operation, args, kwargs)
-    if not hasattr(motor, f"{_operation}_{attr}"):
-        return
-    io_attr_fn = getattr(motor, f"{_operation}_{attr}")
-    # read_attempts =
-    ret = None
-    # while read_attempts < attempts:
-    attempts = 10
-    attempts = 4
-    attempt_ctr = 0
-    while attempts > 0:
-        # while True:
-        # logging.warning("reading")
-        # logging.warning(f"attempts: {attempt_ctr}")
-        try:
-            ret = io_attr_fn(*args, **kwargs)
-            if _operation == "set" and ret:
-                break
-            elif _operation == "get":
-                break
-        except:
-            # read_attempts += 1
-            # time.sleep(0.05)
-            time.sleep(0.1)
-        attempts -= 1
-        attempt_ctr += 1
-
-    return ret
-
-
-# def safe_get(attr, attempts=10):
-def safe_set(attr, *args, **kwargs):
-    return safe_io(attr, "set", *args, **kwargs)
-
-
-def safe_get(attr, attempts=float("inf"), *args, **kwargs):
-    return safe_io(attr, "get", *args, **kwargs)
+TIME_TUPLE_INDEX = ["year", "month", "day", "hour", "minute", "second", "millisecond"]
 
 
 DEFAULT_NETWORK_CONFIG_FILE = "./.network_config.txt"
 NETWORK_CONFIGS = "./.network_configs"
 wifi = None
+
+LED_OFFSET = 6
+
+
+def enum(**enums: int):
+    return type("Enum", (), enums)
+
+
+State = enum(Idle=1, Stopwatch=2, Timer=3, Alert=4, Alarm=5)
+state = State.Idle
 
 
 def connect_wifi(network_configs=NETWORK_CONFIGS):
@@ -171,48 +137,6 @@ def connect_wifi(network_configs=NETWORK_CONFIGS):
     return wifi.isconnected()
 
 
-TIME_TUPLE_INDEX = ["year", "month", "day",
-                    "hour", "minute", "second", "millisecond"]
-
-
-def time2led(t_alarm=None, clear=True, *args, **kwargs):
-    global state
-    if state not in [State.Idle, State.Alarm]:
-        return
-    index_hour, index_minute = time2index()
-    np12_idxs, np24_idxs, colors = [index_hour], [
-        index_minute], [(0, 0, 0, 16)]
-
-    if t_alarm is not None:
-        [alarm_hour, alarm_minute] = time.localtime(t_alarm)[3:5]
-        [index_alarm_hour, index_alarm_minute] = time2index(
-            alarm_hour, alarm_minute)
-
-        alarm_colors = (16, 0, 0, 0) if alarm_hour < 12 else (0, 0, 16, 0)
-        np12_idxs.append(index_alarm_hour)
-        np24_idxs.append(index_alarm_minute)
-        colors.append(alarm_colors)
-        # index2led(index_alarm_hour, index_alarm_minute, colors=alarm_colors, write=False)
-    # if clear:
-    #     np_clear(np12)
-    #     np_clear(np24)
-    # index2led(index_hour, index_minute, write=True)
-    # logging.warning(f"NP12: {np12_idxs}")
-    # logging.warning(f"NP24: {np24_idxs}")
-    for np, idxs in zip([np12, np24], [np12_idxs, np24_idxs]):
-        # np_clear(np)
-        np.fill((0, 0, 0, 0))
-        for i, color in zip(idxs, colors):
-            np_i = list(np[_idx(i)])
-            np_i = tuple([n+c for n, c in zip(np_i, color)])
-            np[_idx(i)] = np_i
-        np_offset(np, int(len(np)/2))
-        np.write()
-
-    # np12.write()
-    # np24.write()
-
-
 def np_clear(np):
     np.fill((0, 0, 0, 0))
     np.write()
@@ -232,21 +156,20 @@ def np_offset(np, offset):
     # return np
 
 
-def index2led(index_hour, index_minute, colors=(0, 0, 0, 127), write_fn=None, write=True):
+def index2led(
+    index_hour, index_minute, colors=(0, 0, 0, 127), write_fn=None, write=True
+):
     for np, i in zip([np12, np24], [index_hour, index_minute]):
         if write_fn is None:
             # np.fill((0, 0, 0, 0))
             np[_idx(i)] = colors
             if write:
-                np_offset(np, int(len(np)/2))
+                np_offset(np, int(len(np) / 2))
                 np.write()
         else:
             new_vals = [(0, 0, 0, 0)] * len(np)
             new_vals[i] = colors
             write_fn(np, new_vals)
-
-
-LED_OFFSET = 6
 
 
 def _idx(i):
@@ -277,67 +200,13 @@ def get_time():
     return t[TIME_TUPLE_INDEX.index("hour")], t[TIME_TUPLE_INDEX.index("minute")]
 
 
-ENABLED = False
-
-
-def disable():
-    _able(False)
-
-
-def enable():
-    _able(True)
-
-
-def _able(_enable: bool):
-    global ENABLED
-    safe_set("led", _enable)
-    safe_set("torque_enable", _enable)
-    ENABLED = _enable
-
-
 t_start = t_last = time.time()
 t_alarm = 0
 last_moved = 0
 
 
-def enum(**enums: int):
-    return type("Enum", (), enums)
-
-
-State = enum(Idle=1, Stopwatch=2, Timer=3, Alert=4, Alarm=5)
-state = State.Idle
-
-
-def _get_position(**kwargs):
-    global position
-    position = safe_get("present_position", **kwargs)
-    # position = POSITION_MAX - position
-    return position
-
-
-async def get_position():
-    global position
-    while True:
-        position = _get_position()
-        await asyncio.sleep_ms(1)
-    # return  _get_position()
-
-
-def global_position(fn):
-    def _fn(*args, **kwargs):
-        global position
-        while position is None:
-            position = _get_position()
-        # if position is None:
-        #     # # position = get_position()
-        # return fn(position=position, *args, **kwargs)
-        return fn(position=position)
-
-    return _fn
-
-
 @global_position
-def position2rots_rel(position=None):
+def rots_relpos_from_position(position=None):
     rots = position // 4096
     rots %= len(TIMESCALES_CUMU)
     rel_pos = position % 4096
@@ -350,7 +219,7 @@ def position2led(position=None, np=np12, *args, **kwargs):
     # def position2led(position=None, np=np24, *args, **kwargs):
     global breath_mult
     np_count = len(np)
-    rots, rel_pos = position2rots_rel(position)
+    rots, rel_pos = rots_relpos_from_position(position)
     clock_pos = rel_pos / 4096 * np_count
     rots %= len(TIMESCALES_CUMU)
     total_time = TIMESCALES_CUMU[rots] * (rel_pos / 4096)
@@ -371,7 +240,7 @@ def position2led(position=None, np=np12, *args, **kwargs):
     for j in range(clock_pos, np_count):
         np[_idx(j)] = (0, 0, 0, 0)
     position2led_value(position)
-    np_offset(np, int(len(np)/2))
+    np_offset(np, int(len(np) / 2))
     np.write()
 
 
@@ -385,23 +254,14 @@ def position2led_value(position=None, np=np24, *args, **kwargs):
         np[_idx(led_1)] = (32, 0, 0, 0)
     if not at_reset():
         np[_idx(led_2)] = (0, 0, 32, 0)
-    np_offset(np, int(len(np)/2))
+    np_offset(np, int(len(np) / 2))
     np.write()
-
-
-@global_position
-def position2time(position=None):
-    rots, rel_pos = position2rots_rel(position)
-    norm_pos = rel_pos / 4096
-    scale = TIMESCALES_CUMU[min(rots, len(TIMESCALES_CUMU) - 1)]
-    ret = norm_pos * scale
-    return ret
 
 
 @global_position
 def position2value(position=None):
     # convert a position to its mapped value on the given timescale
-    rots, rel_pos = position2rots_rel(position)
+    rots, rel_pos = rots_relpos_from_position(position)
     norm_pos = rel_pos / 4096
     # Special case: if in decades-life, show age instead
     if rots == 6:
@@ -421,7 +281,7 @@ def position2digits(position=None):
 
 
 position = _get_position()
-last_rot, _ = position2rots_rel(position)
+last_rot, _ = rots_relpos_from_position(position)
 
 
 async def reset_motor():
@@ -544,8 +404,7 @@ def tick():
         t_left = max(t_total - del_t, 0)
         pos_t = time2position(t_left)
         pos_t = max(2, pos_t)
-        logging.warning(
-            f"{t_left}, {del_t}, {position}, {pos_t}")
+        logging.warning(f"{t_left}, {del_t}, {position}, {pos_t}")
 
         # motor.set_torque_enable(True)
         while not motor.set_goal_position(pos_t):
@@ -573,9 +432,7 @@ async def _tick(t_start, t_last, t_total):
         t = max(t_total - t, 0)
     position_t = time2position(t)
     position_t = min(max(position_t, POSITION_MIN), POSITION_MAX)
-    logging.warning(
-        f"{t_total}, {t}, {position}, {position_t}"
-    )
+    logging.warning(f"{t_total}, {t}, {position}, {position_t}")
     ENABLED = True
     while not safe_set("goal_position", position_t):
         time.sleep(0.1)
@@ -623,7 +480,7 @@ async def wag(delay=0.1):
     global POSITION_WAG, ENABLED
 
     ENABLED = True
-    safe_set("goal_position", POSITION_WAG+OFFSET_WAG)
+    safe_set("goal_position", POSITION_WAG + OFFSET_WAG)
     time.sleep(delay)
     disable()
     ENABLED = False
@@ -684,7 +541,7 @@ ALARM_TIME = 0
 
 @global_position
 def position2alarm(position=None):
-    _, rel_pos = position2rots_rel(position)
+    _, rel_pos = rots_relpos_from_position(position)
     rots = position // 4096
 
     # calculate which rotation this position is at
@@ -735,8 +592,7 @@ def get_time_alarm(hour, minute):
         # if alarm time is earlier than current time,
         # add another day
         logging.warning(f"{t_alarm}, {t_now}")
-        logging.warning(
-            f"{local_alarm}, {local_now}")
+        logging.warning(f"{local_alarm}, {local_now}")
         if t_alarm >= t_now:
             return t_alarm
 
@@ -766,7 +622,6 @@ def get_state():
         del_pos = VALUE_MAX - position
         rot_range = 4096
         if del_pos < 4096:
-
             return State.Stopwatch
         elif del_pos < 2 * 4096:
             return State.Alarm
@@ -780,7 +635,6 @@ async def handle_state():
     while True:
         logging.debug(f"State: {state}")
         if state == State.Idle:
-
             if not at_reset():
                 if at_rest():
                     t_start = t_last = time.time()
@@ -800,7 +654,7 @@ async def handle_state():
             # transition to Timer
             pass
         elif state == State.Timer:
-           # tick()
+            # tick()
             # if at_reset() or last_moved > t_start:
             if last_moved > t_start:
                 if ENABLED:
@@ -821,7 +675,6 @@ async def handle_state():
                 #     await set_idle()
 
             elif at_reset():
-
                 _reset_motor()
                 # await set_idle()
 
@@ -832,9 +685,8 @@ async def handle_state():
                 #     _reset_motor()
                 #     await set_idle()
                 # else:
-                logging.warning(
-                    f"TIMER, {t_start}, {t_last}, {t_total}")
-                cur_rot, _ = position2rots_rel(position)
+                logging.warning(f"TIMER, {t_start}, {t_last}, {t_total}")
+                cur_rot, _ = rots_relpos_from_position(position)
                 last_rot = cur_rot
 
         elif state == State.Stopwatch:
@@ -880,7 +732,7 @@ def _merge_write(np, new_vals):
             np_n[i] = max(np_n[i], np_new)
         np[n] = tuple(np_n)
 
-    np_offset(np, int(len(np)/2))
+    np_offset(np, int(len(np) / 2))
 
     np.write()
 
@@ -897,13 +749,11 @@ async def moving_thread():
     while True:
         try:
             if not ENABLED:
-
                 present_velocity = safe_get("present_velocity")
                 # if present_velocity is not None and present_velocity > 0 and not ENABLED:
                 if present_velocity is not None and not close_to_end(present_velocity):
                     last_moved = time.time()
-                    logging.warning(
-                        f"VELOCITY, {present_velocity}")
+                    logging.warning(f"VELOCITY, {present_velocity}")
         except:
             pass
 
@@ -923,12 +773,166 @@ async def loop_pos2led():
         # time.sleep(0.1)
 
 
+class Tokidoki:
+    def __init__(self):
+        self.motors = DynamixelManager(USB_PORT, baud_rate=BAUDRATE)
+        self.motor = self.motors.add_dynamixel("motor", ID, DYNAMIXEL_MODEL)
+        self.motors.init()
+        self.np12 = np12
+        self.np24 = np24
+        self.state = State.Idle
+        self._enabled = False
+        self.rotations = 0
+        self.position = 0
+        self.rel_position = 0
+
+    def _able(self, enable: bool):
+        self.safe_set("led", enable)
+        self.safe_set("torque_enable", enable)
+
+    def disable(self):
+        self._able(False)
+
+    def enable(self):
+        self._able(True)
+
+    @property
+    def enabled(self):
+        self._enabled = self.safe_get("torque_enable")
+        return self._enabled
+
+    def safe_io(self, attr, _operation="get", *args, **kwargs):
+        # logging.warning(attr, _operation, args, kwargs)
+        if not hasattr(self.motor, f"{_operation}_{attr}"):
+            return
+        io_attr_fn = getattr(self.motor, f"{_operation}_{attr}")
+        # read_attempts =
+        ret = None
+        # while read_attempts < attempts:
+        attempts = 10
+        attempts = 4
+        attempt_ctr = 0
+        while attempts > 0:
+            # while True:
+            # logging.warning("reading")
+            # logging.warning(f"attempts: {attempt_ctr}")
+            try:
+                ret = io_attr_fn(*args, **kwargs)
+                if _operation == "set" and ret:
+                    break
+                elif _operation == "get":
+                    break
+            except:
+                # read_attempts += 1
+                # time.sleep(0.05)
+                time.sleep(0.1)
+            attempts -= 1
+            attempt_ctr += 1
+
+        return ret
+
+    def safe_set(self, attr, *args, **kwargs):
+        return self.safe_io(attr, "set", *args, **kwargs)
+
+    def safe_get(self, attr, attempts=float("inf"), *args, **kwargs):
+        return self.safe_io(attr, "get", *args, **kwargs)
+
+    def time2led(self, t_alarm=None, clear=True, *args, **kwargs):
+        if self.state not in [State.Idle, State.Alarm]:
+            return
+        index_hour, index_minute = time2index()
+        np12_idxs, np24_idxs, colors = [index_hour], [index_minute], [(0, 0, 0, 16)]
+
+        if t_alarm is not None:
+            [alarm_hour, alarm_minute] = time.localtime(t_alarm)[3:5]
+            [index_alarm_hour, index_alarm_minute] = time2index(
+                alarm_hour, alarm_minute
+            )
+
+            alarm_colors = (16, 0, 0, 0) if alarm_hour < 12 else (0, 0, 16, 0)
+            np12_idxs.append(index_alarm_hour)
+            np24_idxs.append(index_alarm_minute)
+            colors.append(alarm_colors)
+            # index2led(index_alarm_hour, index_alarm_minute, colors=alarm_colors, write=False)
+        # if clear:
+        #     np_clear(np12)
+        #     np_clear(np24)
+        # index2led(index_hour, index_minute, write=True)
+        # logging.warning(f"NP12: {np12_idxs}")
+        # logging.warning(f"NP24: {np24_idxs}")
+        for np, idxs in zip([self.np12, self.np24], [np12_idxs, np24_idxs]):
+            # np_clear(np)
+            np.fill((0, 0, 0, 0))
+            for i, color in zip(idxs, colors):
+                np_i = list(np[_idx(i)])
+                np_i = tuple([n + c for n, c in zip(np_i, color)])
+                np[_idx(i)] = np_i
+            np_offset(np, int(len(np) / 2))
+            np.write()
+
+        # np12.write()
+        # np24.write()
+
+    def check_moved(self): ...
+
+    async def tick(self, hz: int = 60):
+        ts_start = time.time()
+        period = 1 / hz
+        while True:
+            ts = time.time()
+            await self.render(ts - ts_start)
+            delta_ts = time.time() - ts
+            if delta_ts < period:
+                await asyncio.sleep(period - delta_ts)
+
+    async def update_position(self, hz: 120):
+        period = 1 / hz
+        while True:
+            self.position = self.safe_get("present_position")
+
+            self.rotations = (self.position // 4096) % len(TIMESCALES_CUMU)
+            self.rel_position = self.position % 4096
+            await asyncio.sleep(period)
+
+    async def render(self):
+        match self.state:
+            case State.Idle:
+                # render time
+                ...
+            case State.Stopwatch:
+                # render passed time
+                ...
+            case State.Timer:
+                # render remaining time
+                ...
+            case State.Alert:
+                # render flashing lights?
+                ...
+            case State.Alarm:
+                # render time like State.Idle
+                # but also alarm
+                ...
+
+    def position2time(
+        self,
+        position=None
+    ):
+        if position is None:
+            position = self.position
+        rots, rel_pos = rots_relpos_from_position(position)
+        norm_pos = rel_pos / 4096
+        scale = TIMESCALES_CUMU[min(rots, len(TIMESCALES_CUMU) - 1)]
+        ret = norm_pos * scale
+        return ret
+
+
 def main():
     disable()
     time.sleep(0.1)
-    safe_set("operating_mode", 4)
+    td = Tokidoki()
+    td.safe_set("operating_mode", 4)
     time.sleep(0.1)
-    safe_set("profile_velocity", 262)
+    td.safe_set("profile_velocity", 262)
     time.sleep(0.1)
     enable()
     # safe_set("goal_position", 0)
@@ -958,7 +962,7 @@ def main():
             moving_thread(),
             loop_pos2led(),
             handle_state(),
-            get_position(),
+            update_position(),
         )
 
     asyncio.run(_main())
